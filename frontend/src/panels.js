@@ -1,4 +1,5 @@
 import { MarketEngine, RESOURCES } from './market.js';
+import { GlobeMap } from './globemap.js';
 
 export class Panels {
   constructor(token, pixelStream, hud, getInventory, getTokens) {
@@ -7,6 +8,7 @@ export class Panels {
     this.getTokens    = getTokens;   // () => number
     this.market       = new MarketEngine();
     this.market.onPriceUpdate = () => this._refreshTicker();
+    this.globe        = new GlobeMap(hud);
     this.focusIndex   = 0;
   }
 
@@ -66,7 +68,9 @@ export class Panels {
       this.hud.notify('🌾 מערכת חקלאות — בקרוב!', 'info');
     });
     document.getElementById('btn-map')?.addEventListener('click', () => {
-      this.hud.notify('🗺️ מפה — בקרוב!', 'info');
+      this.closeAll();
+      document.getElementById('btn-map')?.classList.add('active');
+      this.globe.open();
     });
 
     // Keyboard shortcuts
@@ -78,7 +82,12 @@ export class Panels {
       const map = { Digit1: 'inventory', Digit2: 'market', Digit3: 'robots', Digit6: 'quests' };
       if (map[e.code]) { e.preventDefault(); this._togglePanel(map[e.code]); return; }
       if (e.code === 'Digit4') { e.preventDefault(); this.hud.notify('🌾 מערכת חקלאות — בקרוב!', 'info'); return; }
-      if (e.code === 'Digit7') { e.preventDefault(); this.hud.notify('🗺️ מפה — בקרוב!', 'info'); return; }
+      if (e.code === 'Digit7') {
+        e.preventDefault();
+        if (document.getElementById('globe-overlay')) { this.globe.close(); document.getElementById('btn-map')?.classList.remove('active'); }
+        else { this.closeAll(); document.getElementById('btn-map')?.classList.add('active'); this.globe.open(); }
+        return;
+      }
 
       // Letter shortcuts
       if (e.code === 'KeyM') { e.preventDefault(); this._togglePanel('market'); }
@@ -92,6 +101,7 @@ export class Panels {
   closeAll() {
     document.querySelectorAll('.game-panel').forEach(p => p.classList.add('hidden'));
     document.querySelectorAll('.hotbar-slot').forEach(s => s.classList.remove('active'));
+    if (document.getElementById('globe-overlay')) this.globe.close();
     this.focusIndex = 0;
   }
 

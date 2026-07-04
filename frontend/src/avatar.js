@@ -55,9 +55,10 @@ export function openAvatarCreator(onAvatarReady) {
 
 // ── GLTF Avatar Loader ───────────────────────────────────────────────────────
 export class AvatarController {
-  constructor(scene, terrainHeightFn) {
+  constructor(scene, terrainHeightFn, options = {}) {
     this.scene = scene;
     this.terrainHeight = terrainHeightFn;
+    this.waterLevel = options.waterLevel ?? -1.5;
     this.loader = new GLTFLoader();
     this.mixer = null;
     this.model = null;
@@ -71,6 +72,8 @@ export class AvatarController {
     this.yaw = 0;
     this.isMoving = false;
     this.isSprinting = false;
+    this.isSwimming = false;
+    this.onSwimChange = null;
   }
 
   async load(glbUrl) {
@@ -155,6 +158,7 @@ export class AvatarController {
         if (name.includes('idle') && !this.actions.idle) this.actions.idle = action;
         if (name.includes('walk') && !this.actions.walk) this.actions.walk = action;
         if (name.includes('run')  && !this.actions.run)  this.actions.run  = action;
+        if (name.includes('swim') && !this.actions.swim) this.actions.swim = action;
       }
 
       // Fallbacks — never jump
@@ -164,6 +168,7 @@ export class AvatarController {
       }
       if (!this.actions.walk) this.actions.walk = this.actions.idle;
       if (!this.actions.run)  this.actions.run  = this.actions.walk;
+      if (!this.actions.swim) this.actions.swim = this.actions.walk;
 
       this._playAction('idle');
     }
@@ -205,7 +210,18 @@ export class AvatarController {
     this.isSprinting = !!keys['ShiftLeft'];
     this.isMoving = dir.length() > 0;
 
-    const speed = this.isMoving ? (this.isSprinting ? 10 : 5) : 0;
+    const pxBefore = this.model.position.x;
+    const pzBefore = this.model.position.z;
+    const terrainBefore = this.terrainHeight(pxBefore, pzBefore);
+    const nextSwimming = terrainBefore <= this.waterLevel + 0.15;
+    if (nextSwimming !== this.isSwimming) {
+      this.isSwimming = nextSwimming;
+      this.onSwimChange?.(this.isSwimming);
+    }
+
+    const walkSpeed = this.isSwimming ? 2.8 : 5;
+    const runSpeed = this.isSwimming ? 4.2 : 10;
+    const speed = this.isMoving ? (this.isSprinting ? runSpeed : walkSpeed) : 0;
 
     if (this.isMoving) {
       dir.normalize();
@@ -219,21 +235,30 @@ export class AvatarController {
 
     // Smooth terrain follow — lerp Y to avoid jitter/bouncing
     const px = this.model.position.x, pz = this.model.position.z;
-    const targetY = this.terrainHeight(px, pz);
+    const terrainY = this.terrainHeight(px, pz);
+    const bob = Math.sin(Date.now() * 0.006) * 0.08;
+    const targetY = this.isSwimming ? this.waterLevel - 0.7 + bob : terrainY;
     this.model.position.y += (targetY - this.model.position.y) * 0.18;
     this.position.copy(this.model.position);
 
     // Animations
-    if (this.isMoving) {
+    if (this.isSwimming) {
+      this._playAction(this.isMoving ? 'swim' : 'idle');
+      if (this.currentAction) this.currentAction.timeScale = this.isMoving ? 0.75 : 0.45;
+    } else if (this.isMoving) {
       this._playAction(this.isSprinting ? 'run' : 'walk');
+      if (this.currentAction) this.currentAction.timeScale = 1;
     } else {
       this._playAction('idle');
+      if (this.currentAction) this.currentAction.timeScale = 1;
     }
 
     // Animate ring
     if (this.ring) {
-      this.ring.position.y = 0.05;
-      this.ring.material.opacity = 0.5 + Math.sin(Date.now() * 0.004) * 0.35;
+      this.ring.position.y = this.isSwimming ? 0.72 : 0.05;
+      this.ring.material.opacity = this.isSwimming
+        ? 0.25 + Math.sin(Date.now() * 0.008) * 0.12
+        : 0.5 + Math.sin(Date.now() * 0.004) * 0.35;
     }
 
     this.mixer?.update(dt);

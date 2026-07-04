@@ -232,6 +232,9 @@ function enterGame() {
   };
 
   world.onPositionUpdate = (x, z) => hud.updateMinimap(x, z);
+  world.onSwimChange = (isSwimming) => {
+    hud.notify(isSwimming ? 'נכנסת למים — מצב שחייה' : 'יצאת מהמים — מצב הליכה', 'info');
+  };
 
   world.onBuild = (type, cost) => {
     const names = { house: 'בית', farm: 'חווה', printer: 'מדפסת בטון' };

@@ -17,10 +17,13 @@ export class GameWorld {
     this.resources   = [];
     this.onCollect   = null;
     this.onBuild     = null; // (type, cost) => void
+    this.onSwimChange = null;
     this.playerSpeed = 8;
     this.isRunning   = false;
     this.inventory   = { wood: 0, stone: 0, iron: 0 };
     this.buildOptionIndex = 0;
+    this.waterLevel = -1.5;
+    this.isSwimming = false;
   }
 
   init() {
@@ -248,7 +251,7 @@ export class GameWorld {
       opacity: 0.82,
     });
     const water = new THREE.Mesh(geo, mat);
-    water.position.y = -1.5;
+    water.position.y = this.waterLevel;
     this.scene.add(water);
     this.water = water;
   }
@@ -550,7 +553,15 @@ export class GameWorld {
   }
 
   _setupAvatar() {
-    this.avatarCtrl = new AvatarController(this.scene, (x, z) => this._terrainHeight(x, z));
+    this.avatarCtrl = new AvatarController(
+      this.scene,
+      (x, z) => this._terrainHeight(x, z),
+      { waterLevel: this.waterLevel }
+    );
+    this.avatarCtrl.onSwimChange = (isSwimming) => {
+      this.isSwimming = isSwimming;
+      this.onSwimChange?.(isSwimming);
+    };
 
     // Load demo avatar immediately
     const DEMO_AVATAR = 'https://threejs.org/examples/models/gltf/Soldier.glb';
@@ -984,14 +995,23 @@ export class GameWorld {
     if (this.keys['KeyD'] || this.keys['ArrowRight']) dir.add(right);
 
     const sprint = this.keys['ShiftLeft'] ? 2.2 : 1;
+    const terrainYBefore = this._terrainHeight(this.player.position.x, this.player.position.z);
+    const nextSwimming = terrainYBefore <= this.waterLevel + 0.15;
+    if (nextSwimming !== this.isSwimming) {
+      this.isSwimming = nextSwimming;
+      this.onSwimChange?.(this.isSwimming);
+    }
+    const waterSpeedFactor = this.isSwimming ? 0.42 : 1;
     if (dir.length() > 0) {
       dir.normalize();
-      this.player.position.addScaledVector(dir, this.playerSpeed * sprint * dt);
+      this.player.position.addScaledVector(dir, this.playerSpeed * sprint * waterSpeedFactor * dt);
       this.player.rotation.y = Math.atan2(dir.x, dir.z);
     }
 
     const px = this.player.position.x, pz = this.player.position.z;
-    this.player.position.y = this._terrainHeight(px, pz);
+    const terrainY = this._terrainHeight(px, pz);
+    const swimBob = Math.sin(Date.now() * 0.006) * 0.08;
+    this.player.position.y = this.isSwimming ? this.waterLevel - 0.35 + swimBob : terrainY;
     this.onPositionUpdate?.(px, pz);
   }
 
