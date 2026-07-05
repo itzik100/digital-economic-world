@@ -135,10 +135,18 @@ export class GlobeMap {
     el.innerHTML = `
       <div class="globe-header">
         <h2 class="globe-title">🌍 מפת העולם</h2>
-        <div class="globe-hint">גרור לסיבוב • גלגל לזום • לחץ על אזור לפרטים</div>
-        <button class="globe-close" id="globe-close-btn">✕</button>
+        <div class="globe-hint">גרור לסיבוב • גלגל לזום • לחץ על עיגול לבחירת אזור</div>
+        <button class="globe-close" id="globe-close-btn">✕ סגור</button>
       </div>
       <canvas id="globe-canvas"></canvas>
+
+      <!-- Zoom controls — bottom center -->
+      <div class="globe-zoom-controls">
+        <button class="globe-zoom-btn" id="globe-zoom-in" title="קרב">＋ זום פנימה</button>
+        <button class="globe-zoom-btn" id="globe-zoom-reset" title="תצוגת עולם">🌍 תצוגת עולם</button>
+        <button class="globe-zoom-btn" id="globe-zoom-out" title="התרחק">－ זום החוצה</button>
+      </div>
+
       <div class="globe-region-info hidden" id="globe-region-info"></div>
       <div class="globe-legend">
         <div class="legend-item"><span class="legend-dot" style="background:#00d4ff"></span>אזור הבית</div>
@@ -151,6 +159,17 @@ export class GlobeMap {
 
     requestAnimationFrame(() => el.classList.add('globe-open'));
     document.getElementById('globe-close-btn').onclick = () => this.close();
+
+    document.getElementById('globe-zoom-in').onclick = () => {
+      this._zoom = Math.max(1.3, this._zoom - 0.5);
+    };
+    document.getElementById('globe-zoom-out').onclick = () => {
+      this._zoom = Math.min(5.0, this._zoom + 0.5);
+    };
+    document.getElementById('globe-zoom-reset').onclick = () => {
+      this._zoom = 2.8;
+      this._hideRegionInfo();
+    };
   }
 
   // ── Three.js setup ────────────────────────────────────────────────────────
@@ -320,14 +339,22 @@ export class GlobeMap {
       ring.lookAt(pos.clone().multiplyScalar(2));
       this.globe.add(ring);
 
-      // Dot
+      // Dot (visible)
       const dotGeo = new THREE.CircleGeometry(0.018, 16);
       const dotMat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
       const dot    = new THREE.Mesh(dotGeo, dotMat);
       dot.position.copy(pos);
       dot.lookAt(pos.clone().multiplyScalar(2));
-      dot.userData.region = region;
       this.globe.add(dot);
+
+      // Invisible hit area — much larger, catches raycaster clicks
+      const hitGeo = new THREE.CircleGeometry(0.09, 16);
+      const hitMat = new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide });
+      const hit    = new THREE.Mesh(hitGeo, hitMat);
+      hit.position.copy(pos);
+      hit.lookAt(pos.clone().multiplyScalar(2));
+      hit.userData.region = region;
+      this.globe.add(hit);
 
       // Home indicator
       if (region.isHome) {
@@ -344,7 +371,7 @@ export class GlobeMap {
         this.globe.add(home);
       }
 
-      this.markers.push({ ring, dot, region, pos, phase: Math.random() * Math.PI * 2 });
+      this.markers.push({ ring, dot, hit, region, pos, phase: Math.random() * Math.PI * 2 });
     }
   }
 
@@ -354,15 +381,20 @@ export class GlobeMap {
 
     // Drag to rotate
     canvas.addEventListener('mousedown', e => {
-      this._isDragging = true;
-      this._lastMouse  = { x: e.clientX, y: e.clientY };
-      this._rotVel     = { x: 0, y: 0 };
+      this._isDragging   = true;
+      this._dragMoved    = false;
+      this._mouseDownPos = { x: e.clientX, y: e.clientY };
+      this._lastMouse    = { x: e.clientX, y: e.clientY };
+      this._rotVel       = { x: 0, y: 0 };
       canvas.style.cursor = 'grabbing';
     });
     window.addEventListener('mousemove', e => {
       if (!this._isDragging) return;
       const dx = e.clientX - this._lastMouse.x;
       const dy = e.clientY - this._lastMouse.y;
+      const totalDx = e.clientX - this._mouseDownPos.x;
+      const totalDy = e.clientY - this._mouseDownPos.y;
+      if (Math.abs(totalDx) > 4 || Math.abs(totalDy) > 4) this._dragMoved = true;
       this._rotVel.x = dy * 0.005;
       this._rotVel.y = dx * 0.005;
       this._rotTarget.x += dy * 0.005;
@@ -393,6 +425,9 @@ export class GlobeMap {
   }
 
   _onCanvasClick(e) {
+    // Ignore if the mouse moved (was a drag, not a click)
+    if (this._dragMoved) return;
+
     const canvas = this.renderer.domElement;
     const rect   = canvas.getBoundingClientRect();
     const mouse  = new THREE.Vector2(
@@ -401,8 +436,9 @@ export class GlobeMap {
     );
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(mouse, this.camera);
-    const dots = this.markers.map(m => m.dot);
-    const hits = raycaster.intersectObjects(dots);
+    // Use invisible hit areas (larger) for detection
+    const hitMeshes = this.markers.map(m => m.hit);
+    const hits = raycaster.intersectObjects(hitMeshes);
     if (hits.length) {
       this._showRegionInfo(hits[0].object.userData.region);
     } else {
@@ -427,12 +463,15 @@ export class GlobeMap {
         <div class="region-stat"><span class="stat-icon">📦</span><span>${resources}</span></div>
         <div class="region-stat"><span class="stat-icon">📈</span><span>כלכלה ${region.economy}</span></div>
       </div>
-      ${region.unlocked
-        ? `<button class="region-enter-btn" id="region-enter">
-             ${region.isHome ? '🏠 כניסה לאזור הבית' : '🚀 כנס לאזור'}
-           </button>`
-        : `<div class="region-unlock-hint">פתח אזור זה לאחר הגעה לרמה 5</div>`
-      }
+      <div class="region-actions">
+        ${region.unlocked
+          ? `<button class="region-enter-btn" id="region-enter">
+               ${region.isHome ? '🏠 כניסה לאזור הבית' : '🚀 כנס לאזור'}
+             </button>`
+          : `<div class="region-unlock-hint">פתח אזור זה לאחר הגעה לרמה 5</div>`
+        }
+        <button class="region-zoomout-btn" id="region-zoomout">← חזרה לתצוגת העולם</button>
+      </div>
     `;
     el.classList.remove('hidden');
 
@@ -441,10 +480,16 @@ export class GlobeMap {
       this.close();
     });
 
-    // Smooth rotate to region
+    document.getElementById('region-zoomout')?.addEventListener('click', () => {
+      this._zoom = 2.8;
+      this._hideRegionInfo();
+    });
+
+    // Smooth rotate + zoom into region
     const lonNorm = ((region.lng + 180) / 360) * Math.PI * 2;
     this._rotTarget.y = -lonNorm + Math.PI;
     this._rotTarget.x = -region.lat * (Math.PI / 180) * 0.7;
+    this._zoom = 1.65;
   }
 
   _hideRegionInfo() {

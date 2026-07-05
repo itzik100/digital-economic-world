@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { AvatarController, openAvatarCreator } from './avatar.js';
-import { buildSatelliteTexture, applySatelliteToTerrain } from './terrain-satellite.js';
+import { buildTerrainMaterial } from './terrain-assets.js';
 import { BuildingSystem, BUILDING_DEFS } from './building.js';
 import { RobotSystem } from './robot.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -22,7 +22,7 @@ export class GameWorld {
     this.isRunning   = false;
     this.inventory   = { wood: 0, stone: 0, iron: 0 };
     this.buildOptionIndex = 0;
-    this.waterLevel = -1.5;
+    this.waterLevel = -7.0;
     this.isSwimming = false;
   }
 
@@ -36,6 +36,7 @@ export class GameWorld {
     this._buildSky();
     this._buildTrees(120);
     this._buildRocks(60);
+    this._buildBushes(80);
     this._buildPlayer();
     this._setupAvatar();
     this._setupInput();
@@ -68,7 +69,7 @@ export class GameWorld {
 
   _setupScene() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0a1628);
+    this.scene.background = new THREE.Color(0x87ceeb);
   }
 
   _setupCamera() {
@@ -77,26 +78,26 @@ export class GameWorld {
   }
 
   _setupLights() {
-    // Sun
-    this.sun = new THREE.DirectionalLight(0xfff4d6, 2.5);
-    this.sun.position.set(80, 120, 60);
+    // Sun — bright daylight
+    this.sun = new THREE.DirectionalLight(0xfff8e8, 3.2);
+    this.sun.position.set(80, 180, 60);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(4096, 4096);
     this.sun.shadow.camera.near = 1;
-    this.sun.shadow.camera.far = 400;
-    this.sun.shadow.camera.left = -100;
-    this.sun.shadow.camera.right = 100;
-    this.sun.shadow.camera.top = 100;
-    this.sun.shadow.camera.bottom = -100;
-    this.sun.shadow.bias = -0.0005;
+    this.sun.shadow.camera.far = 500;
+    this.sun.shadow.camera.left = -120;
+    this.sun.shadow.camera.right = 120;
+    this.sun.shadow.camera.top = 120;
+    this.sun.shadow.camera.bottom = -120;
+    this.sun.shadow.bias = -0.0003;
     this.scene.add(this.sun);
 
-    // Sky ambient
-    const sky = new THREE.HemisphereLight(0x87ceeb, 0x2d5a1b, 0.8);
+    // Sky ambient — blue sky bounce
+    const sky = new THREE.HemisphereLight(0x9ad4f0, 0x4a7a30, 1.1);
     this.scene.add(sky);
 
-    // Fill light
-    const fill = new THREE.DirectionalLight(0x4488ff, 0.3);
+    // Fill light — soft blue from opposite side
+    const fill = new THREE.DirectionalLight(0xaaccff, 0.4);
     fill.position.set(-50, 30, -50);
     this.scene.add(fill);
   }
@@ -117,7 +118,7 @@ export class GameWorld {
     pos.needsUpdate = true;
     geo.computeVertexNormals();
 
-    const mat = this._buildTerrainMaterial();
+    const mat = buildTerrainMaterial();
 
     const terrain = new THREE.Mesh(geo, mat);
     terrain.receiveShadow = true;
@@ -126,37 +127,52 @@ export class GameWorld {
   }
 
   _terrainHeight(x, z) {
-    return (
-      Math.sin(x * 0.04) * Math.cos(z * 0.04) * 4 +
-      Math.sin(x * 0.09 + 1.2) * Math.sin(z * 0.07) * 2.5 +
-      Math.cos(x * 0.02 + z * 0.015) * 6 +
-      Math.sin(x * 0.18) * Math.cos(z * 0.22) * 0.8
+    // Gentle rolling hills — mostly above waterLevel (-7), water only in deep valleys
+    const base = (
+      Math.sin(x * 0.03) * Math.cos(z * 0.03) * 3.5 +
+      Math.sin(x * 0.07 + 1.2) * Math.sin(z * 0.06) * 2.0 +
+      Math.cos(x * 0.018 + z * 0.012) * 4.5 +
+      Math.sin(x * 0.14) * Math.cos(z * 0.18) * 0.6
     );
+    // Lift entire terrain by 3 so the center is well above water
+    return base + 3.0;
   }
 
-  // ── שלב 2: Terrain Shader ────────────────────────────────────────────────
-  _buildTerrainMaterial() {
+  // _buildTerrainMaterial removed — replaced by buildTerrainMaterial() from terrain-assets.js
+
+  _REMOVED_buildTerrainMaterial() {
+    // Canvas-generated textures: grass, dirt, gravel — tiled and sharp
+    const grassTex  = this._makeGroundTex('grass');
+    const dirtTex   = this._makeGroundTex('dirt');
+    const gravelTex = this._makeGroundTex('gravel');
+
     return new THREE.ShaderMaterial({
       uniforms: {
-        uFogColor:  { value: new THREE.Color(0x0a1628) },
-        uFogNear:   { value: 80.0 },
-        uFogFar:    { value: 300.0 },
+        uGrass:   { value: grassTex  },
+        uDirt:    { value: dirtTex   },
+        uGravel:  { value: gravelTex },
+        uFogColor:{ value: new THREE.Color(0xc8e8f5) },
+        uFogNear: { value: 160.0 },
+        uFogFar:  { value: 380.0 },
       },
       vertexShader: `
-        varying vec3 vWorldPos;
-        varying vec3 vNormal;
+        varying vec3  vWorldPos;
+        varying vec3  vNormal;
         varying float vFogDepth;
-
         void main() {
-          vec4 worldPos = modelMatrix * vec4(position, 1.0);
-          vWorldPos = worldPos.xyz;
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorldPos = wp.xyz;
           vNormal   = normalize(normalMatrix * normal);
-          vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
-          vFogDepth = -mvPos.z;
-          gl_Position = projectionMatrix * mvPos;
+          vec4 mv   = modelViewMatrix * vec4(position, 1.0);
+          vFogDepth = -mv.z;
+          gl_Position = projectionMatrix * mv;
         }
       `,
       fragmentShader: `
+        precision highp float;
+        uniform sampler2D uGrass;
+        uniform sampler2D uDirt;
+        uniform sampler2D uGravel;
         uniform vec3  uFogColor;
         uniform float uFogNear;
         uniform float uFogFar;
@@ -165,11 +181,10 @@ export class GameWorld {
         varying vec3  vNormal;
         varying float vFogDepth;
 
-        /* ── Noise helpers ── */
         float hash(vec2 p) {
-          return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453);
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
         }
-        float vnoise(vec2 p) {
+        float noise(vec2 p) {
           vec2 i = floor(p), f = fract(p);
           f = f*f*(3.0-2.0*f);
           return mix(
@@ -177,62 +192,68 @@ export class GameWorld {
             mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y);
         }
         float fbm(vec2 p) {
-          return vnoise(p)*.50 + vnoise(p*2.1)*.25 + vnoise(p*4.5)*.15 + vnoise(p*9.0)*.10;
+          return noise(p)*0.5 + noise(p*2.1)*0.25 + noise(p*4.3)*0.15 + noise(p*8.9)*0.10;
         }
 
         void main() {
-          float h  = vWorldPos.y;
-          vec2  xz = vWorldPos.xz;
-          vec3  N  = normalize(vNormal);
-          float slope = 1.0 - clamp(dot(N, vec3(0,1,0)), 0.0, 1.0);
+          vec2  xz    = vWorldPos.xz;
+          float h     = vWorldPos.y;
+          vec3  N     = normalize(vNormal);
+          float slope = 1.0 - clamp(dot(N, vec3(0.0,1.0,0.0)), 0.0, 1.0);
 
-          /* noise layers */
-          float n1 = fbm(xz * 0.06);
-          float n2 = fbm(xz * 0.28 + vec2(17.3, 5.1));
-          float n3 = fbm(xz * 1.10 + vec2(3.7, 9.2));
+          /* ── Tiled texture sampling (repeat every 8 world units = sharp) ── */
+          vec2  uv8  = xz * 0.125;   /* 1/8  */
+          vec2  uv4  = xz * 0.25;    /* 1/4  */
+          vec3  tGrass  = texture2D(uGrass,  uv8).rgb;
+          vec3  tDirt   = texture2D(uDirt,   uv4).rgb;
+          vec3  tGravel = texture2D(uGravel, uv4).rgb;
 
-          /* ── colour layers by height ── */
-          vec3 cSand  = vec3(0.76, 0.66, 0.42);
-          vec3 cGrass = mix(vec3(0.23,0.48,0.15), vec3(0.18,0.38,0.11), n1);
-          vec3 cDirt  = vec3(0.47,0.35,0.23);
-          vec3 cRock  = mix(vec3(0.42,0.40,0.38), vec3(0.30,0.28,0.26), n3);
-          vec3 cSnow  = vec3(0.93,0.95,1.00);
+          /* ── Noise for blending ── */
+          float n1 = fbm(xz * 0.05);
+          float n2 = fbm(xz * 0.18 + vec2(17.3, 5.1));
 
-          vec3 col = cGrass;
+          /* ── Path: winding dirt trail ── */
+          float pathCenterZ = sin(xz.x * 0.03) * 15.0 + cos(xz.x * 0.016) * 7.0;
+          float distPath    = abs(xz.z - pathCenterZ);
+          float onDirt      = smoothstep(4.0, 2.5, distPath);
+          float onGravel    = smoothstep(2.2, 1.0, distPath);
 
-          /* sand near water level */
-          col = mix(col, cSand,  smoothstep(-0.8, 0.3, -(h - 0.5*(n1-.5))));
+          /* ── Base: grass ── */
+          vec3 col = tGrass;
 
-          /* dirt patches on flat ground */
-          float dirt = smoothstep(0.58,0.75,n1) * (1.0-slope) * smoothstep(-1.0,2.0,h);
-          col = mix(col, cDirt, dirt * 0.65);
+          /* dirt patches (biome noise) */
+          float dirtBlend = smoothstep(0.55, 0.72, n1) * (1.0 - slope) * step(-0.5, h);
+          col = mix(col, tDirt, dirtBlend * 0.6);
 
-          /* slope → rock */
-          float rock = smoothstep(0.30,0.60, slope + n2*0.12);
-          col = mix(col, cRock, rock);
+          /* rocky slopes */
+          float rockBlend = smoothstep(0.25, 0.55, slope + n2*0.1);
+          vec3  cRock = vec3(0.45, 0.42, 0.38) + (n2-0.5)*0.05;
+          col = mix(col, cRock, rockBlend);
 
-          /* high altitude → rock then snow */
-          col = mix(col, cRock, smoothstep(3.0, 5.5, h));
-          float snow = smoothstep(5.2, 7.0, h + n1*0.6) * (1.0-slope*1.4);
-          col = mix(col, cSnow, clamp(snow,0.0,1.0));
+          /* high altitude snow */
+          float snowBlend = smoothstep(5.5, 7.5, h + n1*0.8) * (1.0 - slope*1.4);
+          vec3  cSnow = vec3(0.95, 0.97, 1.0);
+          col = mix(col, cSnow, clamp(snowBlend,0.0,1.0));
 
-          /* fine surface detail */
-          col += (n3-0.5)*0.06*(1.0-rock)*(1.0-snow);
+          /* sand near waterline */
+          col = mix(col, vec3(0.80, 0.70, 0.48), smoothstep(0.3, -0.5, h));
 
-          /* ── lighting (self-contained, no Three.js lights system) ── */
-          vec3 sunDir   = normalize(vec3(0.55, 0.80, 0.35));
-          vec3 sunColor = vec3(1.0, 0.95, 0.82);
-          vec3 ambColor = vec3(0.22, 0.28, 0.40);
+          /* apply path over terrain */
+          col = mix(col, tDirt,   onDirt   * (1.0-rockBlend) * (1.0-snowBlend));
+          col = mix(col, tGravel, onGravel * (1.0-rockBlend) * (1.0-snowBlend));
 
-          float diff   = max(dot(N, sunDir), 0.0);
-          float halftone = smoothstep(0.0, 0.12, diff);   /* soft shadow edge */
-          float ao     = 0.80 + 0.20 * dot(N, vec3(0,1,0));
+          /* ── Lighting ── */
+          vec3 sunDir   = normalize(vec3(0.5, 0.9, 0.3));
+          vec3 sunCol   = vec3(1.0, 0.96, 0.86);
+          vec3 ambCol   = vec3(0.32, 0.40, 0.55);
+          float diff    = max(dot(N, sunDir), 0.0);
+          float softD   = smoothstep(0.0, 0.18, diff);
+          float ao      = 0.75 + 0.25*dot(N, vec3(0,1,0));
+          vec3 lit      = col * (ambCol + sunCol*diff*softD) * ao;
 
-          vec3 lit = col * (ambColor + sunColor * diff * halftone) * ao;
-
-          /* ── fog ── */
-          float fogFactor = smoothstep(uFogNear, uFogFar, vFogDepth);
-          lit = mix(lit, uFogColor, fogFactor);
+          /* ── Fog ── */
+          float ff = smoothstep(uFogNear, uFogFar, vFogDepth);
+          lit = mix(lit, uFogColor, ff);
 
           gl_FragColor = vec4(lit, 1.0);
         }
@@ -240,15 +261,109 @@ export class GameWorld {
     });
   }
 
+  _REMOVED_makeGroundTex(type) {
+    const size = 256;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+
+    if (type === 'grass') {
+      // Base grass green
+      ctx.fillStyle = '#3a7a1a';
+      ctx.fillRect(0, 0, size, size);
+      // Blade variation — random darker/lighter strokes
+      for (let i = 0; i < 2000; i++) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        const l = 4 + Math.random() * 10;
+        const lum = Math.random();
+        ctx.strokeStyle = lum > 0.5
+          ? `rgba(80,180,40,${0.15 + Math.random()*0.25})`
+          : `rgba(20,80,5,${0.1 + Math.random()*0.2})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + (Math.random()-0.5)*3, y - l);
+        ctx.stroke();
+      }
+      // Dirt patches
+      for (let i = 0; i < 30; i++) {
+        const x = Math.random() * size, y = Math.random() * size;
+        const r = 3 + Math.random() * 8;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI*2);
+        ctx.fillStyle = `rgba(100,65,25,${0.2 + Math.random()*0.3})`;
+        ctx.fill();
+      }
+
+    } else if (type === 'dirt') {
+      // Base warm dirt
+      ctx.fillStyle = '#8b5c2a';
+      ctx.fillRect(0, 0, size, size);
+      // Texture variation
+      for (let i = 0; i < 3000; i++) {
+        const x = Math.random() * size, y = Math.random() * size;
+        ctx.fillStyle = Math.random() > 0.5
+          ? `rgba(140,90,40,${0.3})`
+          : `rgba(60,35,10,${0.25})`;
+        ctx.fillRect(x, y, 1 + Math.random()*2, 1 + Math.random()*2);
+      }
+      // Cracked lines
+      for (let i = 0; i < 15; i++) {
+        ctx.strokeStyle = `rgba(50,28,8,${0.15 + Math.random()*0.2})`;
+        ctx.lineWidth = 0.5 + Math.random();
+        ctx.beginPath();
+        const sx = Math.random()*size, sy = Math.random()*size;
+        ctx.moveTo(sx, sy);
+        let cx = sx, cy = sy;
+        for (let s = 0; s < 4; s++) {
+          cx += (Math.random()-0.5)*30; cy += (Math.random()-0.5)*30;
+          ctx.lineTo(cx, cy);
+        }
+        ctx.stroke();
+      }
+
+    } else if (type === 'gravel') {
+      // Base grey-tan
+      ctx.fillStyle = '#9a9080';
+      ctx.fillRect(0, 0, size, size);
+      // Individual pebbles
+      for (let i = 0; i < 400; i++) {
+        const x = Math.random() * size, y = Math.random() * size;
+        const rx = 3 + Math.random()*5, ry = 2 + Math.random()*4;
+        const angle = Math.random() * Math.PI;
+        const lum = 0.55 + Math.random()*0.35;
+        ctx.save();
+        ctx.translate(x, y); ctx.rotate(angle);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI*2);
+        ctx.fillStyle = `rgb(${Math.round(lum*170)},${Math.round(lum*158)},${Math.round(lum*140)})`;
+        ctx.fill();
+        // Highlight
+        ctx.beginPath();
+        ctx.ellipse(-rx*0.2, -ry*0.2, rx*0.4, ry*0.35, 0, 0, Math.PI*2);
+        ctx.fillStyle = `rgba(255,255,255,${0.1 + Math.random()*0.15})`;
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.anisotropy = 16;
+    tex.repeat.set(1, 1);
+    return tex;
+  }
+
   _buildWater() {
     const geo = new THREE.PlaneGeometry(500, 500);
     geo.rotateX(-Math.PI / 2);
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x0066aa,
-      roughness: 0.05,
-      metalness: 0.1,
+      color: 0x2a6644,  // dark green-blue — looks like a real lake/river
+      roughness: 0.08,
+      metalness: 0.05,
       transparent: true,
-      opacity: 0.82,
+      opacity: 0.88,
     });
     const water = new THREE.Mesh(geo, mat);
     water.position.y = this.waterLevel;
@@ -257,14 +372,14 @@ export class GameWorld {
   }
 
   _buildSky() {
-    // Gradient sky dome
+    // Daytime gradient sky dome
     const geo = new THREE.SphereGeometry(900, 32, 16);
     const mat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       uniforms: {
-        topColor:    { value: new THREE.Color(0x0a1628) },
-        horizonColor:{ value: new THREE.Color(0x1a3a6a) },
-        bottomColor: { value: new THREE.Color(0x050e1a) },
+        topColor:    { value: new THREE.Color(0x3a8fd4) },
+        horizonColor:{ value: new THREE.Color(0xc8e8f5) },
+        bottomColor: { value: new THREE.Color(0xa0cce0) },
       },
       vertexShader: `
         varying float vY;
@@ -279,8 +394,9 @@ export class GameWorld {
         uniform vec3 bottomColor;
         varying float vY;
         void main() {
-          vec3 col = mix(horizonColor, topColor, max(vY, 0.0));
-          col = mix(bottomColor, col, step(0.0, vY));
+          vec3 col = mix(horizonColor, topColor, smoothstep(0.0, 0.6, vY));
+          // Below horizon — show terrain-matched haze, not dark
+          col = mix(horizonColor, col, smoothstep(-0.05, 0.05, vY));
           gl_FragColor = vec4(col, 1.0);
         }
       `
@@ -304,21 +420,21 @@ export class GameWorld {
     const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 1.5, sizeAttenuation: false });
     this.scene.add(new THREE.Points(starGeo, starMat));
 
-    // Sun disc — bright white so bloom picks it up
-    const sunGeo = new THREE.SphereGeometry(9, 16, 16);
-    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    // Sun disc — daytime position, high in sky
+    const sunGeo = new THREE.SphereGeometry(7, 16, 16);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xfffbe8 });
     const sunMesh = new THREE.Mesh(sunGeo, sunMat);
-    sunMesh.position.set(200, 280, -300);
+    sunMesh.position.set(120, 380, -200);
     this.scene.add(sunMesh);
 
-    // Sun inner glow layers
-    [28, 50, 90].forEach((r, i) => {
+    // Soft halo rings
+    [20, 40, 75].forEach((r, i) => {
       const g = new THREE.Mesh(
         new THREE.SphereGeometry(r, 16, 16),
         new THREE.MeshBasicMaterial({
-          color: i === 0 ? 0xfffbe0 : 0xff9900,
+          color: 0xffeebb,
           transparent: true,
-          opacity: [0.18, 0.07, 0.025][i]
+          opacity: [0.12, 0.05, 0.02][i]
         })
       );
       g.position.copy(sunMesh.position);
@@ -330,105 +446,97 @@ export class GameWorld {
     const rng = (a, b) => a + Math.random() * (b - a);
     const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 
-    // Shared materials
-    const barkMat = new THREE.MeshStandardMaterial({ color: 0x4a2e12, roughness: 0.95 });
-    const darkBark = new THREE.MeshStandardMaterial({ color: 0x2e1a08, roughness: 1.0 });
+    const barkMat   = new THREE.MeshLambertMaterial({ color: 0x5c3510 });
+    const birchMat  = new THREE.MeshLambertMaterial({ color: 0xc8bfb0 });
 
     const leafPalette = [
-      new THREE.MeshStandardMaterial({ color: 0x1e5c10, roughness: 0.9 }),
-      new THREE.MeshStandardMaterial({ color: 0x2a7a18, roughness: 0.85 }),
-      new THREE.MeshStandardMaterial({ color: 0x164a0e, roughness: 0.95 }),
-      new THREE.MeshStandardMaterial({ color: 0x3a8820, roughness: 0.88 }),
-      new THREE.MeshStandardMaterial({ color: 0x225e14, roughness: 0.9 }),
+      new THREE.MeshLambertMaterial({ color: 0x2d6e10 }),
+      new THREE.MeshLambertMaterial({ color: 0x3a8818 }),
+      new THREE.MeshLambertMaterial({ color: 0x246008 }),
+      new THREE.MeshLambertMaterial({ color: 0x4a9820 }),
+      new THREE.MeshLambertMaterial({ color: 0x1a5208 }),
     ];
+    const pineLeaf = new THREE.MeshLambertMaterial({ color: 0x1a5010 });
 
     for (let i = 0; i < count; i++) {
-      const x = rng(-170, 170);
-      const z = rng(-170, 170);
-      if (Math.abs(x) < 14 && Math.abs(z) < 14) continue;
-      const y = this._terrainHeight(x, z);
+      // Cluster trees along path edges and in forest zones
+      let x, z;
+      const zone = Math.random();
+      if (zone < 0.5) {
+        // Forest strips on both sides of path
+        const side = Math.random() > 0.5 ? 1 : -1;
+        x = rng(-160, 160);
+        const pathCenterZ = Math.sin(x * 0.03) * 15.0 + Math.cos(x * 0.016) * 7.0;
+        z = pathCenterZ + side * (rng(8, 50));
+      } else {
+        x = rng(-160, 160);
+        z = rng(-160, 160);
+      }
+      if (Math.abs(x) < 10 && Math.abs(z) < 10) continue;
 
-      // Pick tree type
+      const y = this._terrainHeight(x, z);
+      if (y < this.waterLevel + 0.5) continue; // no trees in water
+
       const type = Math.random();
       const group = new THREE.Group();
       group.position.set(x, y, z);
       group.rotation.y = rng(0, Math.PI * 2);
+      // Natural size variation — avoid giant trees
+      const sizeScale = rng(0.7, 1.3);
+      group.scale.setScalar(sizeScale);
 
-      if (type < 0.45) {
-        // ── Oak / Deciduous ──
-        const h = rng(3.5, 6.5);
-        const trunkR = rng(0.18, 0.32);
+      if (type < 0.5) {
+        // ── Oak / Broad-leaf (most common) ──
+        const h = rng(3.5, 5.5);
+        const tr = rng(0.14, 0.22);
 
-        // Trunk — tapered
         const trunk = new THREE.Mesh(
-          new THREE.CylinderGeometry(trunkR * 0.6, trunkR, h * 0.55, 8),
-          barkMat
-        );
-        trunk.position.y = h * 0.275;
-        trunk.castShadow = true;
-        group.add(trunk);
-
-        // 2–3 branches
-        const branchCount = 2 + Math.floor(Math.random() * 2);
-        for (let b = 0; b < branchCount; b++) {
-          const bAngle = (b / branchCount) * Math.PI * 2 + rng(0, 0.8);
-          const bLen   = rng(1.2, 2.2);
-          const branch = new THREE.Mesh(
-            new THREE.CylinderGeometry(trunkR * 0.2, trunkR * 0.35, bLen, 6),
-            darkBark
-          );
-          branch.position.set(
-            Math.sin(bAngle) * trunkR * 0.8,
-            h * 0.45 + rng(0, h * 0.1),
-            Math.cos(bAngle) * trunkR * 0.8
-          );
-          branch.rotation.z = Math.PI * 0.3 * Math.sin(bAngle);
-          branch.rotation.x = Math.PI * 0.3 * Math.cos(bAngle);
-          branch.castShadow = true;
-          group.add(branch);
-        }
-
-        // Canopy — multiple overlapping spheres
-        const leafMat = pick(leafPalette);
-        const canopyY = h * 0.72;
-        const clumps  = 4 + Math.floor(Math.random() * 4);
-        for (let c = 0; c < clumps; c++) {
-          const cr = rng(1.0, 1.8);
-          const cx = rng(-1.2, 1.2);
-          const cy = rng(-0.4, 0.8);
-          const cz = rng(-1.2, 1.2);
-          const leaf = new THREE.Mesh(
-            new THREE.SphereGeometry(cr, 8, 6),
-            leafMat
-          );
-          leaf.position.set(cx, canopyY + cy, cz);
-          leaf.scale.y = rng(0.7, 1.0);
-          leaf.castShadow = true;
-          group.add(leaf);
-        }
-
-      } else if (type < 0.75) {
-        // ── Pine / Conifer ──
-        const h = rng(5, 10);
-        const trunk = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.12, 0.25, h * 0.5, 7),
+          new THREE.CylinderGeometry(tr * 0.55, tr, h * 0.5, 7),
           barkMat
         );
         trunk.position.y = h * 0.25;
         trunk.castShadow = true;
         group.add(trunk);
 
-        // Stacked cone layers from bottom to top
-        const layers = 4 + Math.floor(Math.random() * 3);
+        // Canopy — irregular cluster of overlapping spheres
         const leafMat = pick(leafPalette);
-        for (let l = 0; l < layers; l++) {
-          const t   = l / (layers - 1);
-          const r   = rng(1.6, 2.4) * (1 - t * 0.65);
-          const ly  = h * 0.35 + t * h * 0.62;
-          const lh  = rng(1.6, 2.4) * (1 - t * 0.3);
-          const cone = new THREE.Mesh(
-            new THREE.ConeGeometry(r, lh, 8),
+        const clumps  = 5 + Math.floor(Math.random() * 5);
+        const baseY   = h * 0.6;
+        for (let c = 0; c < clumps; c++) {
+          const cr = rng(0.8, 1.5);
+          const cx = rng(-cr * 0.8, cr * 0.8);
+          const cy = rng(-cr * 0.3, cr * 0.5);
+          const cz = rng(-cr * 0.8, cr * 0.8);
+          const leaf = new THREE.Mesh(
+            new THREE.SphereGeometry(cr, 7, 5),
             leafMat
+          );
+          leaf.position.set(cx, baseY + cy, cz);
+          leaf.scale.set(rng(0.9, 1.2), rng(0.75, 1.0), rng(0.9, 1.2));
+          leaf.castShadow = true;
+          group.add(leaf);
+        }
+
+      } else if (type < 0.78) {
+        // ── Pine / Conifer ──
+        const h = rng(4.5, 8.0);
+        const trunk = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.10, 0.20, h * 0.45, 6),
+          barkMat
+        );
+        trunk.position.y = h * 0.22;
+        trunk.castShadow = true;
+        group.add(trunk);
+
+        const layers = 3 + Math.floor(Math.random() * 3);
+        for (let l = 0; l < layers; l++) {
+          const t  = l / (layers - 1);
+          const r  = rng(1.2, 1.9) * (1 - t * 0.6);
+          const ly = h * 0.38 + t * h * 0.58;
+          const lh = rng(1.4, 2.0) * (1 - t * 0.25);
+          const cone = new THREE.Mesh(
+            new THREE.ConeGeometry(r, lh, 7),
+            pineLeaf
           );
           cone.position.y = ly;
           cone.castShadow = true;
@@ -437,28 +545,26 @@ export class GameWorld {
 
       } else {
         // ── Birch / Slim ──
-        const h = rng(6, 9);
-        const birchMat = new THREE.MeshStandardMaterial({ color: 0xd8cfc4, roughness: 0.8 });
+        const h = rng(5, 8);
         const trunk = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.10, 0.16, h * 0.7, 8),
+          new THREE.CylinderGeometry(0.08, 0.14, h * 0.65, 7),
           birchMat
         );
-        trunk.position.y = h * 0.35;
+        trunk.position.y = h * 0.32;
         trunk.castShadow = true;
         group.add(trunk);
 
-        // Delicate leaf clusters
         const leafMat = pick(leafPalette);
-        const clumps = 5 + Math.floor(Math.random() * 4);
+        const clumps  = 4 + Math.floor(Math.random() * 4);
         for (let c = 0; c < clumps; c++) {
           const leaf = new THREE.Mesh(
-            new THREE.SphereGeometry(rng(0.5, 1.0), 7, 5),
+            new THREE.SphereGeometry(rng(0.5, 0.9), 6, 5),
             leafMat
           );
           leaf.position.set(
-            rng(-1.0, 1.0), h * 0.65 + rng(-0.5, 1.5), rng(-1.0, 1.0)
+            rng(-0.9, 0.9), h * 0.65 + rng(-0.4, 1.2), rng(-0.9, 0.9)
           );
-          leaf.scale.set(rng(0.8,1.4), rng(0.6,1.0), rng(0.8,1.4));
+          leaf.scale.set(rng(0.8, 1.3), rng(0.65, 1.0), rng(0.8, 1.3));
           leaf.castShadow = true;
           group.add(leaf);
         }
@@ -470,10 +576,45 @@ export class GameWorld {
     }
   }
 
+  _buildBushes(count) {
+    const rng = (a, b) => a + Math.random() * (b - a);
+    const mats = [
+      new THREE.MeshLambertMaterial({ color: 0x2a6010 }),
+      new THREE.MeshLambertMaterial({ color: 0x3a7818 }),
+      new THREE.MeshLambertMaterial({ color: 0x1e5008 }),
+    ];
+    for (let i = 0; i < count; i++) {
+      // Place bushes near path edges
+      const x = rng(-140, 140);
+      const pathZ = Math.sin(x * 0.032) * 14.0 + Math.cos(x * 0.018) * 6.0;
+      const side  = Math.random() > 0.5 ? 1 : -1;
+      const z     = pathZ + side * rng(5, 22);
+      const y     = this._terrainHeight(x, z);
+      if (y < this.waterLevel + 0.5) continue;
+
+      const group = new THREE.Group();
+      group.position.set(x, y, z);
+      const mat = mats[i % mats.length];
+      const clumps = 2 + Math.floor(Math.random() * 3);
+      for (let c = 0; c < clumps; c++) {
+        const r = rng(0.3, 0.7);
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(r, 6, 4),
+          mat
+        );
+        mesh.position.set(rng(-0.4, 0.4), r * 0.6, rng(-0.4, 0.4));
+        mesh.scale.set(rng(1.0, 1.5), rng(0.65, 0.9), rng(1.0, 1.5));
+        mesh.castShadow = true;
+        group.add(mesh);
+      }
+      this.scene.add(group);
+    }
+  }
+
   _buildRocks(count) {
     const rockMats = [
-      new THREE.MeshStandardMaterial({ color: 0x7a7a7a, roughness: 0.9 }),
-      new THREE.MeshStandardMaterial({ color: 0x6a6060, roughness: 0.85 }),
+      new THREE.MeshLambertMaterial({ color: 0x7a7266 }),
+      new THREE.MeshLambertMaterial({ color: 0x66605a }),
     ];
 
     for (let i = 0; i < count; i++) {
@@ -535,22 +676,8 @@ export class GameWorld {
     this.scene.add(this.player);
   }
 
-  // ── שלב 3: Satellite Tiles ───────────────────────────────────────────────
-  async _loadSatellite() {
-    try {
-      const loadingEl = document.createElement('div');
-      loadingEl.id = 'sat-loading';
-      loadingEl.textContent = '🛰️ טוען תמונת לוויין...';
-      document.body.appendChild(loadingEl);
-
-      const texture = await buildSatelliteTexture(6); // 6×6 tile grid = higher coverage
-      applySatelliteToTerrain(this.terrain, texture);
-
-      loadingEl.remove();
-    } catch (e) {
-      console.warn('Satellite tiles failed, keeping procedural terrain', e);
-    }
-  }
+  // Satellite loading disabled — procedural terrain looks sharper
+  async _loadSatellite() { /* intentionally disabled */ }
 
   _setupAvatar() {
     this.avatarCtrl = new AvatarController(
@@ -789,20 +916,14 @@ export class GameWorld {
   }
 
   _setupRobots() {
-    this.robotSystem = new RobotSystem(this.scene, (x, z) => this._terrainHeight(x, z));
-
-    // Spawn 3 farm robots in the green area
-    this.robotSystem.addFarmRobot( 25,  18);
-    this.robotSystem.addFarmRobot(-30,  12);
-    this.robotSystem.addFarmRobot( 10, -25);
-
-    // Spawn 2 mining robots near rocky zones
-    this.robotSystem.addMiningRobot( 45, -35);
-    this.robotSystem.addMiningRobot(-40,  40);
+    // Free-roaming robots removed — robots are now service stations only
+    // The RobotSystem is kept available for future workstation-mode placement
+    this.robotSystem = null;
   }
 
   _buildFog() {
-    this.scene.fog = new THREE.FogExp2(0x0a1628, 0.007);
+    // Light haze — shows terrain clearly nearby, fades at distance
+    this.scene.fog = new THREE.Fog(0xc8e8f5, 160, 380);
   }
 
   // ── שלב 1: Post-processing ──────────────────────────────────────────
@@ -812,12 +933,12 @@ export class GameWorld {
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
 
-    // Bloom — נותן את ה"זוהר" של משחקי AAA
+    // Bloom — very subtle, only for sun disc
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(w, h),
-      0.55,   // strength
-      0.55,   // radius
-      0.72    // threshold — רק אובייקטים בהירים מאוד זוהרים
+      0.15,   // very low strength
+      0.3,    // tight radius
+      0.95    // high threshold — almost nothing blooms except the sun
     );
     this.composer.addPass(this.bloomPass);
 
@@ -825,10 +946,10 @@ export class GameWorld {
     const colorGradeShader = {
       uniforms: {
         tDiffuse:   { value: null },
-        saturation: { value: 1.18 },
-        contrast:   { value: 1.08 },
-        brightness: { value: 0.02 },
-        tint:       { value: new THREE.Vector3(1.02, 0.98, 0.95) },
+        saturation: { value: 1.10 },
+        contrast:   { value: 1.04 },
+        brightness: { value: 0.01 },
+        tint:       { value: new THREE.Vector3(1.01, 1.00, 0.98) },
       },
       vertexShader: `
         varying vec2 vUv;
@@ -1011,7 +1132,11 @@ export class GameWorld {
     const px = this.player.position.x, pz = this.player.position.z;
     const terrainY = this._terrainHeight(px, pz);
     const swimBob = Math.sin(Date.now() * 0.006) * 0.08;
-    this.player.position.y = this.isSwimming ? this.waterLevel - 0.35 + swimBob : terrainY;
+    this.player.position.y = this.isSwimming ? this.waterLevel - 0.08 + swimBob : terrainY;
+    const targetPitch = this.isSwimming ? Math.PI * 0.5 : 0;
+    const targetRoll = this.isSwimming ? Math.PI : 0;
+    this.player.rotation.x += (targetPitch - this.player.rotation.x) * 0.14;
+    this.player.rotation.z += (targetRoll - this.player.rotation.z) * 0.14;
     this.onPositionUpdate?.(px, pz);
   }
 

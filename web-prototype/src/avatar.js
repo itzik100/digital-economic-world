@@ -65,6 +65,20 @@ export class AvatarController {
     this.actions = {};
     this.currentAction = null;
     this.clock = new THREE.Clock();
+    this.hasSwimAnimation = false;
+    this.swimRestQuaternions = new Map();
+    this.tmpQuat = new THREE.Quaternion();
+    this.swimBones = {
+      leftArm: null,
+      leftForeArm: null,
+      rightArm: null,
+      rightForeArm: null,
+      leftUpLeg: null,
+      leftLeg: null,
+      rightUpLeg: null,
+      rightLeg: null,
+      spine: null,
+    };
 
     // Position & movement state
     this.position = new THREE.Vector3(0, 0, 0);
@@ -112,6 +126,7 @@ export class AvatarController {
     }
 
     this.model = gltf.scene;
+    this.model.rotation.order = 'YXZ';
     this.model.scale.setScalar(1.0);
     // Soldier model faces +Z, rotate 180° so it faces the camera correctly
     this.model.rotation.y = Math.PI;
@@ -124,6 +139,10 @@ export class AvatarController {
           child.material.envMapIntensity = 1.2;
         }
       }
+      if (child.isBone) this._mapSwimBone(child);
+    });
+    this.model.traverse(child => {
+      if (child.isBone) this.swimRestQuaternions.set(child.uuid, child.quaternion.clone());
     });
 
     const y = this.terrainHeight(0, 0);
@@ -158,7 +177,10 @@ export class AvatarController {
         if (name.includes('idle') && !this.actions.idle) this.actions.idle = action;
         if (name.includes('walk') && !this.actions.walk) this.actions.walk = action;
         if (name.includes('run')  && !this.actions.run)  this.actions.run  = action;
-        if (name.includes('swim') && !this.actions.swim) this.actions.swim = action;
+        if (name.includes('swim') && !this.actions.swim) {
+          this.actions.swim = action;
+          this.hasSwimAnimation = true;
+        }
       }
 
       // Fallbacks — never jump
@@ -168,7 +190,7 @@ export class AvatarController {
       }
       if (!this.actions.walk) this.actions.walk = this.actions.idle;
       if (!this.actions.run)  this.actions.run  = this.actions.walk;
-      if (!this.actions.swim) this.actions.swim = this.actions.walk;
+      if (!this.actions.swim) this.actions.swim = this.actions.idle;
 
       this._playAction('idle');
     }
@@ -237,14 +259,18 @@ export class AvatarController {
     const px = this.model.position.x, pz = this.model.position.z;
     const terrainY = this.terrainHeight(px, pz);
     const bob = Math.sin(Date.now() * 0.006) * 0.08;
-    const targetY = this.isSwimming ? this.waterLevel - 0.7 + bob : terrainY;
+    const targetY = this.isSwimming ? this.waterLevel - 0.22 + bob : terrainY;
     this.model.position.y += (targetY - this.model.position.y) * 0.18;
     this.position.copy(this.model.position);
 
     // Animations
     if (this.isSwimming) {
       this._playAction(this.isMoving ? 'swim' : 'idle');
-      if (this.currentAction) this.currentAction.timeScale = this.isMoving ? 0.75 : 0.45;
+      if (this.currentAction) {
+        this.currentAction.timeScale = this.hasSwimAnimation
+          ? (this.isMoving ? 0.85 : 0.35)
+          : 0.05;
+      }
     } else if (this.isMoving) {
       this._playAction(this.isSprinting ? 'run' : 'walk');
       if (this.currentAction) this.currentAction.timeScale = 1;
@@ -262,9 +288,81 @@ export class AvatarController {
     }
 
     this.mixer?.update(dt);
+    this._applySwimPose(dt);
   }
 
   get worldPosition() {
     return this.position;
+  }
+
+  _mapSwimBone(bone) {
+    const name = bone.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    if (!this.swimBones.spine && (name.includes('spine') || name.includes('chest'))) {
+      this.swimBones.spine = bone;
+      return;
+    }
+
+    const isLeft = name.includes('left') || name.includes('larm') || name.includes('lleg');
+    const isRight = name.includes('right') || name.includes('rarm') || name.includes('rleg');
+    const isForeArm = name.includes('forearm') || name.includes('lowerarm');
+    const isArm = name.includes('arm') && !isForeArm && !name.includes('hand');
+    const isUpLeg = name.includes('upleg') || name.includes('thigh');
+    const isLeg = (name.includes('leg') || name.includes('calf')) && !isUpLeg && !name.includes('foot');
+
+    if (isLeft && isArm && !this.swimBones.leftArm) this.swimBones.leftArm = bone;
+    if (isLeft && isForeArm && !this.swimBones.leftForeArm) this.swimBones.leftForeArm = bone;
+    if (isRight && isArm && !this.swimBones.rightArm) this.swimBones.rightArm = bone;
+    if (isRight && isForeArm && !this.swimBones.rightForeArm) this.swimBones.rightForeArm = bone;
+    if (isLeft && isUpLeg && !this.swimBones.leftUpLeg) this.swimBones.leftUpLeg = bone;
+    if (isLeft && isLeg && !this.swimBones.leftLeg) this.swimBones.leftLeg = bone;
+    if (isRight && isUpLeg && !this.swimBones.rightUpLeg) this.swimBones.rightUpLeg = bone;
+    if (isRight && isLeg && !this.swimBones.rightLeg) this.swimBones.rightLeg = bone;
+  }
+
+  _applySwimPose(dt) {
+    if (!this.model) return;
+
+    const targetPitch = this.isSwimming ? Math.PI * 0.5 : 0;
+    const targetRoll = this.isSwimming ? Math.PI : 0;
+    this.model.rotation.x += (targetPitch - this.model.rotation.x) * 0.18;
+    this.model.rotation.z += (targetRoll - this.model.rotation.z) * 0.18;
+
+    const moving = this.isMoving ? 1 : 0.35;
+    const t = performance.now() * 0.0045;
+    const stroke = Math.sin(t) * moving;
+    const counter = Math.sin(t + Math.PI) * moving;
+    const kick = Math.sin(t * 1.65) * moving;
+
+    const {
+      leftArm, leftForeArm, rightArm, rightForeArm,
+      leftUpLeg, leftLeg, rightUpLeg, rightLeg, spine
+    } = this.swimBones;
+
+    if (!this.isSwimming) {
+      for (const bone of Object.values(this.swimBones)) this._poseBone(bone, new THREE.Euler(0, 0, 0), 0.18);
+      return;
+    }
+
+    // Front crawl pose over a frozen idle base. This avoids the old "tilted walking" look.
+    this._poseBone(spine, new THREE.Euler(-0.18, 0, 0), 0.45);
+    this._poseBone(leftArm, new THREE.Euler(-1.35 + stroke * 0.85, 0.15, 0.55 + Math.cos(t) * 0.2), 0.55);
+    this._poseBone(rightArm, new THREE.Euler(-1.35 + counter * 0.85, -0.15, -0.55 - Math.cos(t) * 0.2), 0.55);
+    this._poseBone(leftForeArm, new THREE.Euler(-0.85 + counter * 0.45, 0, 0.12), 0.55);
+    this._poseBone(rightForeArm, new THREE.Euler(-0.85 + stroke * 0.45, 0, -0.12), 0.55);
+    this._poseBone(leftUpLeg, new THREE.Euler(0.18 + kick * 0.32, 0, 0.08), 0.5);
+    this._poseBone(rightUpLeg, new THREE.Euler(0.18 - kick * 0.32, 0, -0.08), 0.5);
+    this._poseBone(leftLeg, new THREE.Euler(-0.25 - kick * 0.32, 0, 0), 0.5);
+    this._poseBone(rightLeg, new THREE.Euler(-0.25 + kick * 0.32, 0, 0), 0.5);
+  }
+
+  _poseBone(bone, offsetEuler, alpha) {
+    if (!bone) return;
+    const rest = this.swimRestQuaternions.get(bone.uuid);
+    if (!rest) return;
+
+    this.tmpQuat.setFromEuler(offsetEuler);
+    const target = rest.clone().multiply(this.tmpQuat);
+    bone.quaternion.slerp(target, alpha);
   }
 }
