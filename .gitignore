@@ -40,20 +40,20 @@ prisma/migrations/dev/
 docker-compose.override.yml
 
 # Unreal Engine 5
-ue5-project/Binaries/
-ue5-project/Build/
-ue5-project/DerivedDataCache/
-ue5-project/Intermediate/
-ue5-project/Saved/
-ue5-project/.vs/
-ue5-project/*.sln
-ue5-project/*.opensdf
-ue5-project/*.sdf
-ue5-project/*.suo
-ue5-project/*.xcworkspace
-ue5-project/*.xcodeproj
-ue5-project/Plugins/*/Binaries/
-ue5-project/Plugins/*/Intermediate/
+game-client-unreal/Binaries/
+game-client-unreal/Build/
+game-client-unreal/DerivedDataCache/
+game-client-unreal/Intermediate/
+game-client-unreal/Saved/
+game-client-unreal/.vs/
+game-client-unreal/*.sln
+game-client-unreal/*.opensdf
+game-client-unreal/*.sdf
+game-client-unreal/*.suo
+game-client-unreal/*.xcworkspace
+game-client-unreal/*.xcodeproj
+game-client-unreal/Plugins/*/Binaries/
+game-client-unreal/Plugins/*/Intermediate/
 
 # Large binary assets (add exceptions with ! if needed)
 *.psd
